@@ -1,0 +1,40 @@
+{
+    "name": "temant/encryption-manager",
+    "description": "A comprehensive PHP library for encryption and decryption",
+    "type": "library",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Temant\\EncryptionManager\\": "Src/"
+        }
+    },
+    "require": {
+        "php": ">=8.3"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.2",
+        "phpstan/phpstan": "^1.11"
+    },
+    "scripts": {
+        "phpstan": "./vendor/bin/phpstan analyse",
+        "phpunit": "./vendor/bin/phpunit",
+        "check-all": [
+            "@phpstan",
+            "@phpunit"
+        ]
+    },
+    "scripts-descriptions": {
+        "phpstan": "Run PHPStan for static analysis",
+        "phpunit": "Run PHPUnit tests"
+    },
+    "scripts-aliases": {
+        "phpstan": [
+            "stan",
+            "analyze",
+            "analyse"
+        ],
+        "phpunit": [
+            "test"
+        ]
+    }
+}

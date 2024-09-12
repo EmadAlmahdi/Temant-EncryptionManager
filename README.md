@@ -1,6 +1,11 @@
-# Temant Encrypter
+# Temant Encryption Manager
 
-Temant Encrypter is a simple and secure encryption library for PHP. It provides an easy-to-use API for encrypting and decrypting strings and files using AES-128-CBC and AES-256-CBC encryption algorithms.
+![Build Status](https://github.com/EmadAlmahdi/Temant-EncryptionManager/actions/workflows/ci.yml/badge.svg) 
+![Coverage Status](https://codecov.io/gh/EmadAlmahdi/Temant-EncryptionManager/branch/main/graph/badge.svg)
+![License](https://img.shields.io/github/license/EmadAlmahdi/Temant-EncryptionManager)
+![PHPStan](https://img.shields.io/badge/PHPStan-level%20max-brightgreen)
+
+Temant Encryption Manager is a simple and secure encryption library for PHP. It provides an easy-to-use API for encrypting and decrypting strings and files using AES-128-CBC and AES-256-CBC encryption algorithms.
 
 ## Installation
 

@@ -3,7 +3,7 @@
 namespace Temant\Encrypter\Tests;
 
 use Temant\EncryptionManager\EncryptionManager;
-use Temant\EncryptionManager\Exception\EncryptionException;
+use Temant\EncryptionManager\EncryptionException;
 use Temant\EncryptionManager\EncryptionTypeEnum;
 use PHPUnit\Framework\TestCase;
 

@@ -1,6 +1,6 @@
 <?php declare(strict_types=1);
 
-namespace Temant\EncryptionManager\Exception;
+namespace Temant\EncryptionManager;
 
 use Exception;
 use Throwable;

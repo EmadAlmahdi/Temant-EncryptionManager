@@ -1,8 +1,6 @@
 <?php declare(strict_types=1);
 
-namespace Temant\EncryptionManager;
-
-use Temant\EncryptionManager\Exception\EncryptionException;
+namespace Temant\EncryptionManager; 
 
 /**
  * Class EncryptionManager

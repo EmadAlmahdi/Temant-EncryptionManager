@@ -8,7 +8,7 @@ use Temant\EncryptionManager\Contract\EncryptorInterface;
 use Temant\EncryptionManager\Crypto\EncryptionCipher;
 use Temant\EncryptionManager\Crypto\EncryptionConfig;
 use Temant\EncryptionManager\Crypto\KeyDerivation;
-use Temant\EncryptionManager\Crypto\Payload; 
+use Temant\EncryptionManager\Crypto\Payload;
 
 /**
  * Modern authenticated encryptor using AES-GCM only.
@@ -107,15 +107,10 @@ final class EncryptionManager implements EncryptorInterface
             $tag,
             '',
             $this->config->tagBytes
-        ); 
+        );
 
-        return (new Payload(
-            cipherId: $cipherId,
-            salt: $salt,
-            iv: $iv,
-            tag: $tag,
-            ciphertext: $ciphertext
-        ))->toString();
+        return new Payload($cipherId, $salt, $iv, $tag, $ciphertext)
+            ->toString();
     }
 
     /**

@@ -1,215 +1,249 @@
-<?php declare(strict_types=1);
+<?php
 
-namespace Temant\EncryptionManager; 
+declare(strict_types=1);
+
+namespace Temant\EncryptionManager;
+
+use Temant\EncryptionManager\Contract\EncryptorInterface;
+use Temant\EncryptionManager\Crypto\EncryptionCipher;
+use Temant\EncryptionManager\Crypto\EncryptionConfig;
+use Temant\EncryptionManager\Crypto\KeyDerivation;
+use Temant\EncryptionManager\Crypto\Payload; 
 
 /**
- * Class EncryptionManager
- * Handles encryption and decryption of data using a specified cipher and key.
+ * Modern authenticated encryptor using AES-GCM only.
+ *
+ * - App-secret mode: HKDF-derived key (fast; requires high-entropy secret)
+ * - Password mode: PBKDF2-derived key + per-message random salt
  */
-class EncryptionManager
+final class EncryptionManager implements EncryptorInterface
 {
-    private string $key;
-
-    private int $ivLength;
+    /**
+     * Cipher ID mapping for payload encoding/decoding.
+     */
+    private const int CIPHER_ID_AES_256_GCM = 1;
+    private const int CIPHER_ID_AES_128_GCM = 2;
 
     /**
-     * Encryption constructor.
-     * @param string $key The key used for encryption/decryption.
-     * @param EncryptionTypeEnum $cipher The cipher type to use.
+     * Encryption configuration.
+     *
+     * @var EncryptionConfig
      */
-    public function __construct(
-        string $key,
-        private EncryptionTypeEnum $cipher = EncryptionTypeEnum::BYTES_256
-    ) {
-        $this->key = KeyGenerator::generateKey($key);
-        $this->ivLength = intval(openssl_cipher_iv_length($cipher->value));
-    }
+    private readonly EncryptionConfig $config;
 
     /**
-     * Updates the encryption key.
-     * @param string $newKey The new key to be used.
+     * Binary master key derived from the application secret for non-password mode.
+     *
+     * @var string
      */
-    public function updateKey(string $newKey): void
+    private string $masterKey;
+
+    /**
+     * Create a new manager.
+     *
+     * @param string $secret High-entropy application secret.
+     * @param EncryptionConfig|null $config Optional configuration (defaults provided).
+     *
+     * @throws EncryptionException If OpenSSL cipher configuration is invalid.
+     */
+    public function __construct(string $secret, ?EncryptionConfig $config = null)
     {
-        $this->key = KeyGenerator::generateKey($newKey);
+        $this->config = $config ?? EncryptionConfig::defaults();
+
+        // Validate IV length early.
+        $this->config->cipher->ivLength();
+
+        $this->masterKey = KeyDerivation::deriveFromSecret(
+            secret: $secret,
+            keyBytes: $this->config->cipher->keyLength(),
+            info: $this->config->hkdfInfo
+        );
     }
 
     /**
-     * Gets the current key.
-     * @return string The current encryption key.
+     * Rotate the application secret.
+     *
+     * @param string $newSecret New high-entropy application secret.
      */
-    public function getKey(): string
+    public function updateSecret(string $newSecret): void
     {
-        return $this->key;
+        $this->masterKey = KeyDerivation::deriveFromSecret(
+            secret: $newSecret,
+            keyBytes: $this->config->cipher->keyLength(),
+            info: $this->config->hkdfInfo
+        );
     }
 
     /**
-     * Gets the current IV length.
-     * @return int The length of the initialization vector.
+     * {@inheritDoc}
      */
-    public function getIvLength(): int
+    public function encryptString(string $plaintext, ?string $password = null): string
     {
-        return $this->ivLength;
+        $cipher = $this->config->cipher;
+        $cipherId = $this->cipherToId($cipher);
+
+        $salt = $password !== null
+            ? KeyDerivation::randomBytes($this->config->saltBytes)
+            : str_repeat("\0", $this->config->saltBytes);
+
+        $iv = KeyDerivation::randomBytes($cipher->ivLength());
+
+        $key = $password !== null
+            ? KeyDerivation::deriveFromPassword(
+                password: $password,
+                salt: $salt,
+                keyBytes: $cipher->keyLength(),
+                iterations: $this->config->pbkdf2Iterations
+            )
+            : $this->masterKey;
+
+        $tag = '';
+        $ciphertext = openssl_encrypt(
+            $plaintext,
+            $cipher->value,
+            $key,
+            OPENSSL_RAW_DATA,
+            $iv,
+            $tag,
+            '',
+            $this->config->tagBytes
+        ); 
+
+        return (new Payload(
+            cipherId: $cipherId,
+            salt: $salt,
+            iv: $iv,
+            tag: $tag,
+            ciphertext: $ciphertext
+        ))->toString();
     }
 
     /**
-     * Encrypts the given data.
-     * @param string $data The data to encrypt.
-     * @param string|null $password Optional password for key derivation.
-     * @return string The encrypted and base64 encoded data.
-     * @throws EncryptionException If encryption fails.
+     * {@inheritDoc}
      */
-    public function encryptString(string $data, ?string $password = null): string
+    public function decryptString(string $payload, ?string $password = null): string
     {
-        return $password !== null
-            ? $this->encryptWithPassword($data, $password)
-            : $this->encryptWithoutPassword($data);
+        $parsed = Payload::fromString($payload, $this->config);
+        $cipher = $this->idToCipher($parsed->cipherId);
+
+        // Enforce cipher match with configuration to avoid confusing mixed setups.
+        // If you want cross-config decrypt (e.g. AES-128-GCM payloads) keep both ciphers allowed by config.
+        if ($cipher !== $this->config->cipher) {
+            throw EncryptionException::invalidPayload('Cipher mismatch for this manager configuration.');
+        }
+
+        if ($parsed->requiresPassword() && $password === null) {
+            throw EncryptionException::invalidPayload('Password required but not provided.');
+        }
+
+        $key = $password !== null
+            ? KeyDerivation::deriveFromPassword(
+                password: $password,
+                salt: $parsed->salt,
+                keyBytes: $cipher->keyLength(),
+                iterations: $this->config->pbkdf2Iterations
+            )
+            : $this->masterKey;
+
+        $plaintext = openssl_decrypt(
+            $parsed->ciphertext,
+            $cipher->value,
+            $key,
+            OPENSSL_RAW_DATA,
+            $parsed->iv,
+            $parsed->tag,
+            ''
+        );
+
+        if ($plaintext === false) {
+            throw EncryptionException::openSslFailure('Decryption');
+        }
+
+        return $plaintext;
     }
 
     /**
-     * Decrypts the given data.
-     * @param string $data The base64 encoded encrypted data.
-     * @param string|null $password Optional password for key derivation.
-     * @return string The decrypted data.
-     * @throws EncryptionException If decryption fails.
-     */
-    public function decryptString(string $data, ?string $password = null): string
-    {
-        $decodedData = $this->decode($data);
-
-        return $password !== null
-            ? $this->decryptWithPassword($decodedData, $password)
-            : $this->decryptWithoutPassword($decodedData);
-    }
-
-    /**
-     * Encrypts a file and saves it to the specified output file.
-     * @param string $inputFile Path to the input file.
-     * @param string $outputFile Path to the output file.
-     * @param string|null $password Optional password for key derivation.
-     * @throws EncryptionException If file operations fail.
+     * {@inheritDoc}
      */
     public function encryptFile(string $inputFile, string $outputFile, ?string $password = null): void
     {
-        $this->validateFile($inputFile);
-        $data = (string) file_get_contents($inputFile);
-        $encryptedData = $this->encryptString($data, $password);
-        file_put_contents($outputFile, $encryptedData);
+        $this->assertFileExists($inputFile);
+
+        $data = @file_get_contents($inputFile);
+        if ($data === false) {
+            throw EncryptionException::fileReadFailed($inputFile);
+        }
+
+        $encrypted = $this->encryptString($data, $password);
+
+        if (@file_put_contents($outputFile, $encrypted) === false) {
+            throw EncryptionException::fileWriteFailed($outputFile);
+        }
     }
 
     /**
-     * Decrypts a file and saves it to the specified output file.
-     * @param string $inputFile Path to the input file.
-     * @param string $outputFile Path to the output file.
-     * @param string|null $password Optional password for key derivation.
-     * @throws EncryptionException If file operations fail.
+     * {@inheritDoc}
      */
     public function decryptFile(string $inputFile, string $outputFile, ?string $password = null): void
     {
-        $this->validateFile($inputFile);
-        $data = (string) file_get_contents($inputFile);
-        $decryptedData = $this->decryptString($data, $password);
-        file_put_contents($outputFile, $decryptedData);
-    }
+        $this->assertFileExists($inputFile);
 
-    /**
-     * Encrypts data using a password.
-     * @param string $data The data to encrypt.
-     * @param string $password The password for key derivation.
-     * @return string The encrypted and base64 encoded data.
-     */
-    private function encryptWithPassword(string $data, string $password): string
-    {
-        $salt = KeyGenerator::generateIv(8);
-        $keyIv = KeyGenerator::generateKeyIv($password, $salt, $this->ivLength);
-        $encrypted = (string) openssl_encrypt($data, $this->cipher->value, $keyIv->key, OPENSSL_RAW_DATA, $keyIv->iv);
-
-        return $this->encode($salt . $keyIv->iv . $encrypted);
-    }
-
-    /**
-     * Encrypts data without using a password.
-     * @param string $data The data to encrypt.
-     * @return string The encrypted and base64 encoded data.
-     */
-    private function encryptWithoutPassword(string $data): string
-    {
-        $iv = KeyGenerator::generateIv($this->ivLength);
-        $encrypted = (string) openssl_encrypt($data, $this->cipher->value, $this->key, OPENSSL_RAW_DATA, $iv);
-
-        return $this->encode("$iv$encrypted");
-    }
-
-    /**
-     * Decrypts data using a password.
-     * @param string $data The base64 encoded encrypted data.
-     * @param string $password The password for key derivation.
-     * @return string The decrypted data.
-     * @throws EncryptionException If decryption fails.
-     */
-    private function decryptWithPassword(string $data, string $password): string
-    {
-        $salt = substr($data, 0, 8);
-        $iv = substr($data, 8, $this->ivLength);
-        $encrypted = substr($data, 8 + $this->ivLength);
-        $keyIv = KeyGenerator::generateKeyIv($password, $salt, $this->ivLength);
-        $decrypted = openssl_decrypt($encrypted, $this->cipher->value, $keyIv->key, OPENSSL_RAW_DATA, $iv);
-
-        if ($decrypted === false) {
-            throw new EncryptionException("Decryption failed");
+        $data = @file_get_contents($inputFile);
+        if ($data === false) {
+            throw EncryptionException::fileReadFailed($inputFile);
         }
 
-        return $decrypted;
-    }
+        $decrypted = $this->decryptString($data, $password);
 
-    /**
-     * Decrypts data without using a password.
-     * @param string $data The base64 encoded encrypted data.
-     * @return string The decrypted data.
-     * @throws EncryptionException If decryption fails.
-     */
-    private function decryptWithoutPassword(string $data): string
-    {
-        $iv = substr($data, 0, $this->ivLength);
-        $encrypted = substr($data, $this->ivLength);
-        $decrypted = openssl_decrypt($encrypted, $this->cipher->value, $this->key, OPENSSL_RAW_DATA, $iv);
-
-        if ($decrypted === false) {
-            throw new EncryptionException("Decryption failed");
+        if (@file_put_contents($outputFile, $decrypted) === false) {
+            throw EncryptionException::fileWriteFailed($outputFile);
         }
-
-        return $decrypted;
     }
 
     /**
-     * Encodes data to base64.
-     * @param string $data The data to encode.
-     * @return string The base64 encoded data.
+     * Convert cipher enum to payload cipher ID.
+     *
+     * @param EncryptionCipher $cipher Cipher.
+     *
+     * @return int Cipher ID (1 byte).
      */
-    private function encode(string $data): string
+    private function cipherToId(EncryptionCipher $cipher): int
     {
-        return base64_encode($data);
+        return match ($cipher) {
+            EncryptionCipher::AES_256_GCM => self::CIPHER_ID_AES_256_GCM,
+            EncryptionCipher::AES_128_GCM => self::CIPHER_ID_AES_128_GCM,
+        };
     }
 
     /**
-     * Decodes base64 data.
-     * @param string $data The base64 encoded data.
-     * @return string The decoded data.
+     * Convert payload cipher ID to cipher enum.
+     *
+     * @param int $id Payload cipher ID.
+     *
+     * @return EncryptionCipher Cipher.
+     *
+     * @throws EncryptionException If ID is unknown.
      */
-    private function decode(string $data): string
+    private function idToCipher(int $id): EncryptionCipher
     {
-        return base64_decode($data, true) ?: '';
+        return match ($id) {
+            self::CIPHER_ID_AES_256_GCM => EncryptionCipher::AES_256_GCM,
+            self::CIPHER_ID_AES_128_GCM => EncryptionCipher::AES_128_GCM,
+            default => throw EncryptionException::invalidPayload('Unknown cipher id.'),
+        };
     }
 
     /**
-     * Validates if a file exists.
-     * @param string $filePath Path to the file.
-     * @throws EncryptionException If the file does not exist.
+     * Ensure the given path exists and is a regular file.
+     *
+     * @param string $path File path.
+     *
+     * @throws EncryptionException If missing.
      */
-    private function validateFile(string $filePath): void
+    private function assertFileExists(string $path): void
     {
-        if (!file_exists($filePath)) {
-            throw new EncryptionException("File does not exist: $filePath");
+        if (!is_file($path)) {
+            throw EncryptionException::fileNotFound($path);
         }
     }
 }

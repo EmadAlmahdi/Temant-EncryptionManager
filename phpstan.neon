@@ -1,5 +1,9 @@
 parameters:
     editorUrl: 'vscode://file/%%file%%:%%line%%'
     level: max
+    # Keep runtime validation (e.g. EncryptionConfig's constructor guards) meaningful: this is a
+    # public library boundary called by non-analyzed userland code, so PHPDoc-narrowed types
+    # (int<1, max>, etc.) must be verified by real control flow, not just trusted at face value.
+    treatPhpDocTypesAsCertain: false
     paths:
         - Src

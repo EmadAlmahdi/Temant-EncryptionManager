@@ -6,19 +6,64 @@ namespace Temant\EncryptionManager\Tests;
 
 use org\bovigo\vfs\vfsStream;
 use PHPUnit\Framework\TestCase;
-use ReflectionClass;
 use ReflectionMethod;
 use Temant\EncryptionManager\Crypto\EncryptionCipher;
+use Temant\EncryptionManager\Crypto\EncryptionConfig;
 use Temant\EncryptionManager\Crypto\Payload;
+use Temant\EncryptionManager\Crypto\StreamCipher;
 use Temant\EncryptionManager\EncryptionException;
 use Temant\EncryptionManager\EncryptionManager;
-use Temant\EncryptionManager\Crypto\EncryptionConfig;
+
+use function random_int;
+use function chr;
 
 /**
  * Test suite for {@see EncryptionManager}.
  */
 final class EncryptionManagerTest extends TestCase
 {
+    public function testEncryptionConfigRejectsNonPositivePbkdf2Iterations(): void
+    {
+        $this->expectException(EncryptionException::class);
+        $this->expectExceptionMessage('pbkdf2Iterations must be at least 1');
+
+        new EncryptionConfig(
+            cipher: EncryptionCipher::AES_256_GCM,
+            pbkdf2Iterations: 0,
+            saltBytes: 16,
+            tagBytes: 16,
+            hkdfInfo: 'temant-encryption',
+        );
+    }
+
+    public function testEncryptionConfigRejectsNonPositiveSaltBytes(): void
+    {
+        $this->expectException(EncryptionException::class);
+        $this->expectExceptionMessage('saltBytes must be at least 1');
+
+        new EncryptionConfig(
+            cipher: EncryptionCipher::AES_256_GCM,
+            pbkdf2Iterations: 150_000,
+            saltBytes: 0,
+            tagBytes: 16,
+            hkdfInfo: 'temant-encryption',
+        );
+    }
+
+    public function testEncryptionConfigRejectsNonPositiveTagBytes(): void
+    {
+        $this->expectException(EncryptionException::class);
+        $this->expectExceptionMessage('tagBytes must be at least 1');
+
+        new EncryptionConfig(
+            cipher: EncryptionCipher::AES_256_GCM,
+            pbkdf2Iterations: 150_000,
+            saltBytes: 16,
+            tagBytes: -1,
+            hkdfInfo: 'temant-encryption',
+        );
+    }
+
     public function testRoundTripWithoutPassword(): void
     {
         $enc = new EncryptionManager('super-secret-app-key', EncryptionConfig::defaults());
@@ -166,16 +211,65 @@ final class EncryptionManagerTest extends TestCase
         $enc->decryptString($tampered, 'pw');
     }
 
-    public function testUpdateSecretInvalidatesOldPayload(): void
+    public function testUpdateSecretByDefaultKeepsOldPayloadDecryptable(): void
     {
         $enc = new EncryptionManager('old-secret', EncryptionConfig::defaults());
         $payload = $enc->encryptString('hello');
 
         $enc->updateSecret('new-secret');
 
+        // Default rotation keeps the old key in the retired keyring.
+        self::assertSame('hello', $enc->decryptString($payload));
+
+        // New encryptions use the new secret.
+        $newPayload = $enc->encryptString('world');
+        self::assertSame('world', $enc->decryptString($newPayload));
+    }
+
+    public function testUpdateSecretWithRetireCurrentFalseInvalidatesOldPayload(): void
+    {
+        $enc = new EncryptionManager('old-secret', EncryptionConfig::defaults());
+        $payload = $enc->encryptString('hello');
+
+        $enc->updateSecret('new-secret', retireCurrent: false);
+
         $this->expectException(EncryptionException::class);
 
-        // Old payload cannot be decrypted with rotated secret
+        $enc->decryptString($payload);
+    }
+
+    public function testConstructorAcceptsRetiredSecretsForDecryption(): void
+    {
+        $old = new EncryptionManager('old-secret', EncryptionConfig::defaults());
+        $payload = $old->encryptString('hello');
+
+        $new = new EncryptionManager('new-secret', EncryptionConfig::defaults(), retiredSecrets: ['old-secret']);
+
+        self::assertSame('hello', $new->decryptString($payload));
+    }
+
+    public function testAddRetiredSecretAllowsDecryptingOldPayload(): void
+    {
+        $old = new EncryptionManager('old-secret', EncryptionConfig::defaults());
+        $payload = $old->encryptString('hello');
+
+        $new = new EncryptionManager('new-secret', EncryptionConfig::defaults());
+        $new->addRetiredSecret('old-secret');
+
+        self::assertSame('hello', $new->decryptString($payload));
+    }
+
+    public function testClearRetiredSecretsInvalidatesOldPayload(): void
+    {
+        $enc = new EncryptionManager('old-secret', EncryptionConfig::defaults());
+        $payload = $enc->encryptString('hello');
+
+        $enc->updateSecret('new-secret');
+        self::assertSame('hello', $enc->decryptString($payload));
+
+        $enc->clearRetiredSecrets();
+
+        $this->expectException(EncryptionException::class);
         $enc->decryptString($payload);
     }
 
@@ -387,5 +481,257 @@ final class EncryptionManagerTest extends TestCase
             vfsStream::url('root/input.enc'),
             vfsStream::url('root/out/output.txt')
         );
-    } 
+    }
+
+    private function tempDir(): string
+    {
+        $dir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'temant_enc_' . bin2hex(random_bytes(4));
+        self::assertTrue(mkdir($dir) || is_dir($dir));
+
+        return $dir;
+    }
+
+    public function testStreamedFileRoundTripWithoutPassword(): void
+    {
+        $enc = new EncryptionManager('secret', EncryptionConfig::defaults());
+        $dir = $this->tempDir();
+
+        $in = $dir . DIRECTORY_SEPARATOR . 'in.txt';
+        $encFile = $dir . DIRECTORY_SEPARATOR . 'out.enc';
+        $out = $dir . DIRECTORY_SEPARATOR . 'out.txt';
+
+        // Force many chunks with a tiny chunk size.
+        $content = str_repeat('Streamed content chunk. ', 1000);
+        file_put_contents($in, $content);
+
+        $enc->encryptStreamedFile($in, $encFile, chunkSize: 16);
+        $enc->decryptStreamedFile($encFile, $out);
+
+        self::assertSame($content, (string) file_get_contents($out));
+    }
+
+    public function testStreamedFileRoundTripWithPassword(): void
+    {
+        $enc = new EncryptionManager('secret', EncryptionConfig::defaults());
+        $dir = $this->tempDir();
+
+        $in = $dir . DIRECTORY_SEPARATOR . 'in.txt';
+        $encFile = $dir . DIRECTORY_SEPARATOR . 'out.enc';
+        $out = $dir . DIRECTORY_SEPARATOR . 'out.txt';
+
+        $content = 'Sensitive streamed content ' . random_int(1, 1_000_000);
+        file_put_contents($in, $content);
+
+        $enc->encryptStreamedFile($in, $encFile, 'pw', chunkSize: 8);
+        $enc->decryptStreamedFile($encFile, $out, 'pw');
+
+        self::assertSame($content, (string) file_get_contents($out));
+    }
+
+    public function testStreamedFileRoundTripEmptyFile(): void
+    {
+        $enc = new EncryptionManager('secret', EncryptionConfig::defaults());
+        $dir = $this->tempDir();
+
+        $in = $dir . DIRECTORY_SEPARATOR . 'in.txt';
+        $encFile = $dir . DIRECTORY_SEPARATOR . 'out.enc';
+        $out = $dir . DIRECTORY_SEPARATOR . 'out.txt';
+
+        file_put_contents($in, '');
+
+        $enc->encryptStreamedFile($in, $encFile);
+        $enc->decryptStreamedFile($encFile, $out);
+
+        self::assertSame('', (string) file_get_contents($out));
+    }
+
+    public function testStreamedFileUsesKeyRotationKeyring(): void
+    {
+        $old = new EncryptionManager('old-secret', EncryptionConfig::defaults());
+        $dir = $this->tempDir();
+
+        $in = $dir . DIRECTORY_SEPARATOR . 'in.txt';
+        $encFile = $dir . DIRECTORY_SEPARATOR . 'out.enc';
+        $out = $dir . DIRECTORY_SEPARATOR . 'out.txt';
+
+        file_put_contents($in, str_repeat('rotate me ', 100));
+        $old->encryptStreamedFile($in, $encFile, chunkSize: 32);
+
+        $new = new EncryptionManager('new-secret', EncryptionConfig::defaults(), retiredSecrets: ['old-secret']);
+        $new->decryptStreamedFile($encFile, $out);
+
+        self::assertSame(file_get_contents($in), file_get_contents($out));
+    }
+
+    public function testStreamedFileTamperedChunkFailsAuthentication(): void
+    {
+        $enc = new EncryptionManager('secret', EncryptionConfig::defaults());
+        $dir = $this->tempDir();
+
+        $in = $dir . DIRECTORY_SEPARATOR . 'in.txt';
+        $encFile = $dir . DIRECTORY_SEPARATOR . 'out.enc';
+        $out = $dir . DIRECTORY_SEPARATOR . 'out.txt';
+
+        file_put_contents($in, str_repeat('tamper test ', 50));
+        $enc->encryptStreamedFile($in, $encFile, chunkSize: 16);
+
+        $raw = (string) file_get_contents($encFile);
+        $raw[strlen($raw) - 1] = $raw[strlen($raw) - 1] ^ "\x01";
+        file_put_contents($encFile, $raw);
+
+        $this->expectException(EncryptionException::class);
+        $enc->decryptStreamedFile($encFile, $out);
+    }
+
+    public function testStreamedFileTruncatedStreamThrows(): void
+    {
+        $enc = new EncryptionManager('secret', EncryptionConfig::defaults());
+        $dir = $this->tempDir();
+
+        $in = $dir . DIRECTORY_SEPARATOR . 'in.txt';
+        $encFile = $dir . DIRECTORY_SEPARATOR . 'out.enc';
+        $out = $dir . DIRECTORY_SEPARATOR . 'out.txt';
+
+        file_put_contents($in, str_repeat('truncate me ', 50));
+        $enc->encryptStreamedFile($in, $encFile, chunkSize: 16);
+
+        $raw = (string) file_get_contents($encFile);
+        file_put_contents($encFile, substr($raw, 0, (int) (strlen($raw) / 2)));
+
+        $this->expectException(EncryptionException::class);
+        $this->expectExceptionMessage('Invalid stream');
+        $enc->decryptStreamedFile($encFile, $out);
+    }
+
+    public function testStreamedFileMissingFinalChunkThrows(): void
+    {
+        $enc = new EncryptionManager('secret', EncryptionConfig::defaults());
+        $dir = $this->tempDir();
+
+        $in = $dir . DIRECTORY_SEPARATOR . 'in.txt';
+        $encFile = $dir . DIRECTORY_SEPARATOR . 'out.enc';
+        $out = $dir . DIRECTORY_SEPARATOR . 'out.txt';
+
+        // 100 bytes with a 16-byte chunk size: six full 16-byte chunks, then a final 4-byte chunk.
+        file_put_contents($in, str_repeat('x', 100));
+        $enc->encryptStreamedFile($in, $encFile, chunkSize: 16);
+
+        $raw = (string) file_get_contents($encFile);
+
+        // Drop the final chunk on disk: 1 (isFinal) + 4 (length) + 16 (tag, GCM default) + 4 (ciphertext).
+        $finalChunkOnDiskSize = 1 + 4 + 16 + 4;
+        file_put_contents($encFile, substr($raw, 0, -$finalChunkOnDiskSize));
+
+        $this->expectException(EncryptionException::class);
+        $this->expectExceptionMessage('Stream is truncated');
+        $enc->decryptStreamedFile($encFile, $out);
+    }
+
+    public function testStreamedFileCipherMismatchThrows(): void
+    {
+        $enc256 = new EncryptionManager(
+            'secret',
+            new EncryptionConfig(
+                cipher: EncryptionCipher::AES_256_GCM,
+                pbkdf2Iterations: 150_000,
+                saltBytes: 16,
+                tagBytes: 16,
+                hkdfInfo: 'temant-encryption',
+            )
+        );
+
+        $enc128 = new EncryptionManager(
+            'secret',
+            new EncryptionConfig(
+                cipher: EncryptionCipher::AES_128_GCM,
+                pbkdf2Iterations: 150_000,
+                saltBytes: 16,
+                tagBytes: 16,
+                hkdfInfo: 'temant-encryption',
+            )
+        );
+
+        $dir = $this->tempDir();
+        $in = $dir . DIRECTORY_SEPARATOR . 'in.txt';
+        $encFile = $dir . DIRECTORY_SEPARATOR . 'out.enc';
+        $out = $dir . DIRECTORY_SEPARATOR . 'out.txt';
+
+        file_put_contents($in, 'hello');
+        $enc256->encryptStreamedFile($in, $encFile);
+
+        $this->expectException(EncryptionException::class);
+        $this->expectExceptionMessage('Cipher mismatch');
+        $enc128->decryptStreamedFile($encFile, $out);
+    }
+
+    public function testStreamedFilePasswordRequiredButNotProvidedThrows(): void
+    {
+        $enc = new EncryptionManager('secret', EncryptionConfig::defaults());
+        $dir = $this->tempDir();
+
+        $in = $dir . DIRECTORY_SEPARATOR . 'in.txt';
+        $encFile = $dir . DIRECTORY_SEPARATOR . 'out.enc';
+        $out = $dir . DIRECTORY_SEPARATOR . 'out.txt';
+
+        file_put_contents($in, 'hello');
+        $enc->encryptStreamedFile($in, $encFile, 'pw');
+
+        $this->expectException(EncryptionException::class);
+        $this->expectExceptionMessage('Password required');
+        $enc->decryptStreamedFile($encFile, $out);
+    }
+
+    public function testEncryptStreamedFileThrowsWhenInputMissing(): void
+    {
+        $enc = new EncryptionManager('secret', EncryptionConfig::defaults());
+
+        $this->expectException(EncryptionException::class);
+        $this->expectExceptionMessage('File not found');
+
+        $enc->encryptStreamedFile('/path/does/not/exist.txt', '/tmp/out.enc');
+    }
+
+    public function testEncryptStreamedFileThrowsOnInvalidChunkSize(): void
+    {
+        $enc = new EncryptionManager('secret', EncryptionConfig::defaults());
+        $dir = $this->tempDir();
+        $in = $dir . DIRECTORY_SEPARATOR . 'in.txt';
+        file_put_contents($in, 'hello');
+
+        $this->expectException(EncryptionException::class);
+        $this->expectExceptionMessage('Chunk size must be at least 1 byte');
+
+        $enc->encryptStreamedFile($in, $dir . DIRECTORY_SEPARATOR . 'out.enc', chunkSize: 0);
+    }
+
+    public function testDecryptStreamedFileThrowsOnInvalidHeaderChunkSize(): void
+    {
+        $enc = new EncryptionManager('secret', EncryptionConfig::defaults());
+        $dir = $this->tempDir();
+        $encFile = $dir . DIRECTORY_SEPARATOR . 'bad.enc';
+        $out = $dir . DIRECTORY_SEPARATOR . 'out.txt';
+
+        // A well-formed header (default config: 16-byte salt, 7-byte nonce prefix) but chunkSize = 0.
+        $header = StreamCipher::MAGIC . chr(1) . str_repeat("\0", 16) . str_repeat("\0", 7) . pack('N', 0);
+        file_put_contents($encFile, $header);
+
+        $this->expectException(EncryptionException::class);
+        $this->expectExceptionMessage('Invalid chunk size');
+
+        $enc->decryptStreamedFile($encFile, $out);
+    }
+
+    public function testDecryptStreamedFileThrowsOnBadMagic(): void
+    {
+        $enc = new EncryptionManager('secret', EncryptionConfig::defaults());
+        $dir = $this->tempDir();
+        $encFile = $dir . DIRECTORY_SEPARATOR . 'bad.enc';
+        $out = $dir . DIRECTORY_SEPARATOR . 'out.txt';
+        file_put_contents($encFile, 'not-a-stream-file-at-all');
+
+        $this->expectException(EncryptionException::class);
+        $this->expectExceptionMessage('Missing or unknown stream magic');
+
+        $enc->decryptStreamedFile($encFile, $out);
+    }
 }

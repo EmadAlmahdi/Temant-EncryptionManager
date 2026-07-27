@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Temant\EncryptionManager\Crypto;
 
+use Temant\EncryptionManager\EncryptionException;
+
 /**
  * Immutable configuration for encryption behavior.
  *
@@ -13,10 +15,12 @@ final class EncryptionConfig
 {
     /**
      * @param EncryptionCipher $cipher Cipher to use.
-     * @param int $pbkdf2Iterations PBKDF2 iteration count for password mode.
-     * @param int $saltBytes Salt size for password mode (bytes).
-     * @param int $tagBytes Authentication tag size for GCM (bytes).
+     * @param int<1, max> $pbkdf2Iterations PBKDF2 iteration count for password mode.
+     * @param int<1, max> $saltBytes Salt size for password mode (bytes).
+     * @param int<1, max> $tagBytes Authentication tag size for GCM (bytes).
      * @param string $hkdfInfo HKDF "info" context string for app-secret key derivation.
+     *
+     * @throws EncryptionException If any numeric parameter is not a positive integer.
      */
     public function __construct(
         public readonly EncryptionCipher $cipher,
@@ -25,6 +29,17 @@ final class EncryptionConfig
         public readonly int $tagBytes,
         public readonly string $hkdfInfo,
     ) {
+        if ($pbkdf2Iterations < 1) {
+            throw EncryptionException::invalidConfig('pbkdf2Iterations must be at least 1.');
+        }
+
+        if ($saltBytes < 1) {
+            throw EncryptionException::invalidConfig('saltBytes must be at least 1.');
+        }
+
+        if ($tagBytes < 1) {
+            throw EncryptionException::invalidConfig('tagBytes must be at least 1.');
+        }
     }
 
     /**

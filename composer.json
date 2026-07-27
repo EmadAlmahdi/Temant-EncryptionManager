@@ -2,7 +2,7 @@
     "name": "temant/encryption-manager",
     "description": "A comprehensive PHP library for encryption and decryption (AES-GCM) with file handling capabilities.",
     "type": "library",
-    "license": "proprietary",
+    "license": "MIT",
     "autoload": {
         "psr-4": {
             "Temant\\EncryptionManager\\": "Src/"

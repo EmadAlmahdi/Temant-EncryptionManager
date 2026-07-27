@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace Temant\EncryptionManager\Crypto;
 
-use Temant\EncryptionManager\EncryptionException;
-
 /**
  * Supported AEAD ciphers.
  *
@@ -26,17 +24,21 @@ enum EncryptionCipher: string
     /**
      * Get the IV length (bytes) required by this cipher.
      *
-     * @throws EncryptionException If OpenSSL cannot determine IV length.
+     * Both variants use the standard 96-bit (12-byte) GCM IV; this is fixed by construction
+     * (rather than queried from OpenSSL at runtime) since AEAD security depends on it never
+     * silently changing.
+     *
+     * @return int<12, 12>
      */
     public function ivLength(): int
     {
-        return openssl_cipher_iv_length($this->value);
+        return 12;
     }
 
     /**
      * Get the key length (bytes) required by this cipher.
      *
-     * @return int 32 for AES-256-GCM, 16 for AES-128-GCM.
+     * @return 16|32 32 for AES-256-GCM, 16 for AES-128-GCM.
      */
     public function keyLength(): int
     {

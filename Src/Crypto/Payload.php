@@ -36,7 +36,7 @@ final class Payload
     public const string VERSION_PREFIX = 'v1:';
 
     /**
-     * @param int $cipherId Cipher ID.
+     * @param int<0, 255> $cipherId Cipher ID.
      * @param string $salt Binary salt (saltBytes length).
      * @param string $iv Binary IV.
      * @param string $tag Binary auth tag (tagBytes length).

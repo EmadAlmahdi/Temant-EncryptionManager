@@ -16,7 +16,7 @@ final class KeyDerivation
      * Derive a binary key from an application secret using HKDF-SHA256.
      *
      * @param string $secret High-entropy app secret.
-     * @param int $keyBytes Desired output key length in bytes.
+     * @param int<0, max> $keyBytes Desired output key length in bytes.
      * @param string $info HKDF "info" context string.
      *
      * @return string Binary key material of exactly $keyBytes length.
@@ -31,8 +31,8 @@ final class KeyDerivation
      *
      * @param string $password Password input.
      * @param string $salt Binary salt.
-     * @param int $keyBytes Desired output key length in bytes.
-     * @param int $iterations PBKDF2 iteration count.
+     * @param int<0, max> $keyBytes Desired output key length in bytes.
+     * @param int<1, max> $iterations PBKDF2 iteration count.
      *
      * @return string Binary key material.
      */
@@ -44,7 +44,7 @@ final class KeyDerivation
     /**
      * Generate cryptographically secure random bytes.
      *
-     * @param int $length Number of bytes.
+     * @param int<1, max> $length Number of bytes.
      *
      * @return string Binary random bytes.
      *

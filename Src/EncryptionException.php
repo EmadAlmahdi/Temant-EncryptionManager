@@ -30,6 +30,16 @@ final class EncryptionException extends RuntimeException
     }
 
     /**
+     * Create an exception for an invalid {@see \Temant\EncryptionManager\Crypto\EncryptionConfig}.
+     *
+     * @param string $reason Human-readable reason for why the configuration is invalid.
+     */
+    public static function invalidConfig(string $reason): self
+    {
+        return new self("Invalid configuration: $reason");
+    }
+
+    /**
      * Create an exception for an OpenSSL failure.
      *
      * @param string $operation Operation name, e.g. "Encryption" or "Decryption".
@@ -40,6 +50,16 @@ final class EncryptionException extends RuntimeException
         $suffix = $errors !== '' ? (" OpenSSL: $errors") : '';
 
         return new self("$operation failed.$suffix");
+    }
+
+    /**
+     * Create an exception for a malformed or tampered streaming (chunked) payload.
+     *
+     * @param string $reason Human-readable reason for why the stream is invalid.
+     */
+    public static function invalidStream(string $reason): self
+    {
+        return new self("Invalid stream: $reason");
     }
 
     /**

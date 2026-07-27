@@ -7,5 +7,6 @@ require __DIR__ . '/bootstrap.php';
 demoRespond([
     'phpVersion' => PHP_VERSION,
     'opensslLoaded' => extension_loaded('openssl'),
-    'keyFingerprint' => strtoupper(substr(hash('sha256', $_SESSION['demo_secret']), 0, 8)),
+    'keyFingerprint' => demoFingerprint($_SESSION['demo_secret']),
+    'retiredCount' => count($_SESSION['demo_retired_secrets']),
 ]);

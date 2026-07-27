@@ -32,8 +32,10 @@ composer install
 Then, in two terminals:
 
 ```bash
-# Terminal 1 — PHP API on :8000
-php -S 127.0.0.1:8000 -t demo/api
+# Terminal 1 — PHP API on :8000. The -d flags raise the upload limit for the file/streamed-file
+# demos — demo/api/.user.ini does the same thing automatically under PHP-FPM, but the built-in
+# `php -S` server doesn't read .user.ini.
+php -d upload_max_filesize=12M -d post_max_size=12M -S 127.0.0.1:8000 -t demo/api
 
 # Terminal 2 — Vite dev server on :5173, proxies <base>api/* to :8000
 cd demo/web

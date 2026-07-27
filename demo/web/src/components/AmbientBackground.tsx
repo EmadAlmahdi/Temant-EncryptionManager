@@ -1,14 +1,13 @@
 /**
- * Fixed, blurred gradient blobs behind the whole app for ambient depth. Purely decorative and
- * non-interactive; static (no motion) so it costs nothing on low-power devices and respects
- * users who'd rather not see movement.
+ * A faint technical dot grid plus a single restrained glow, instead of the generic soft
+ * multi-color blur blobs — meant to read as "engineered" rather than "marketing site".
+ * Purely decorative, non-interactive, and static (no motion).
  */
 export function AmbientBackground() {
   return (
     <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-      <div className="absolute -top-40 -left-32 h-96 w-96 rounded-full bg-indigo-400/25 blur-[110px] dark:bg-indigo-500/15" />
-      <div className="absolute top-1/3 -right-32 h-96 w-96 rounded-full bg-fuchsia-400/20 blur-[110px] dark:bg-fuchsia-500/10" />
-      <div className="absolute bottom-0 left-1/4 h-80 w-80 rounded-full bg-violet-400/20 blur-[110px] dark:bg-violet-500/10" />
+      <div className="bg-grid absolute inset-0 text-zinc-900/[0.05] dark:text-white/[0.06]" />
+      <div className="absolute -top-40 left-1/2 h-[420px] w-[820px] -translate-x-1/2 rounded-full bg-amber-400/10 blur-[140px] dark:bg-amber-500/10" />
     </div>
   );
 }

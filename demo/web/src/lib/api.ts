@@ -8,6 +8,41 @@ export interface MetaResponse {
   phpVersion: string;
   opensslLoaded: boolean;
   keyFingerprint: string;
+  retiredCount: number;
+}
+
+export interface RotateResponse {
+  ok: boolean;
+  retiredCurrent?: boolean;
+  oldKeyFingerprint?: string;
+  newKeyFingerprint?: string;
+  retiredCount?: number;
+  error?: string;
+}
+
+export interface StreamReport {
+  ok: boolean;
+  originalBytes?: number;
+  encryptedBytes?: number;
+  chunkSize?: number;
+  chunkCount?: number;
+  integrityMatch?: boolean;
+  tamperDetected?: boolean;
+  encryptMs?: number;
+  decryptMs?: number;
+  error?: string;
+}
+
+export interface FileReport {
+  ok: boolean;
+  originalBytes?: number;
+  payloadBytes?: number;
+  payload?: string;
+  integrityMatch?: boolean;
+  tamperDetected?: boolean;
+  encryptMs?: number;
+  decryptMs?: number;
+  error?: string;
 }
 
 // Relative to wherever this app is mounted (see the `base` comment in vite.config.ts), so the
@@ -36,4 +71,41 @@ export function decryptString(payload: string, password: string): Promise<Crypto
 export async function fetchMeta(): Promise<MetaResponse> {
   const res = await fetch(`${API_BASE}meta.php`, { credentials: "same-origin" });
   return (await res.json()) as MetaResponse;
+}
+
+export function rotateSecret(retireCurrent: boolean): Promise<RotateResponse> {
+  return postJson<RotateResponse>(`${API_BASE}rotate.php`, { retireCurrent });
+}
+
+export async function runStreamedRoundTrip(
+  file: File,
+  password: string,
+  chunkSize: number,
+): Promise<StreamReport> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("password", password);
+  form.append("chunkSize", String(chunkSize));
+
+  const res = await fetch(`${API_BASE}stream.php`, {
+    method: "POST",
+    credentials: "same-origin",
+    body: form,
+  });
+
+  return (await res.json()) as StreamReport;
+}
+
+export async function runFileRoundTrip(file: File, password: string): Promise<FileReport> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("password", password);
+
+  const res = await fetch(`${API_BASE}file.php`, {
+    method: "POST",
+    credentials: "same-origin",
+    body: form,
+  });
+
+  return (await res.json()) as FileReport;
 }

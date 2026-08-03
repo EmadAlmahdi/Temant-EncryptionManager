@@ -45,10 +45,6 @@ export interface FileReport {
   error?: string;
 }
 
-// Relative to wherever this app is mounted (see the `base` comment in vite.config.ts), so the
-// API calls keep working whether this is served at the domain root or aliased under a subpath.
-const API_BASE = `${import.meta.env.BASE_URL}api/`;
-
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(path, {
     method: "POST",
@@ -61,20 +57,20 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 }
 
 export function encryptString(plaintext: string, password: string): Promise<CryptoResponse> {
-  return postJson<CryptoResponse>(`${API_BASE}encrypt.php`, { plaintext, password });
+  return postJson<CryptoResponse>(`/api/encrypt.php`, { plaintext, password });
 }
 
 export function decryptString(payload: string, password: string): Promise<CryptoResponse> {
-  return postJson<CryptoResponse>(`${API_BASE}decrypt.php`, { payload, password });
+  return postJson<CryptoResponse>(`/api/decrypt.php`, { payload, password });
 }
 
 export async function fetchMeta(): Promise<MetaResponse> {
-  const res = await fetch(`${API_BASE}meta.php`, { credentials: "same-origin" });
+  const res = await fetch(`/api/meta.php`, { credentials: "same-origin" });
   return (await res.json()) as MetaResponse;
 }
 
 export function rotateSecret(retireCurrent: boolean): Promise<RotateResponse> {
-  return postJson<RotateResponse>(`${API_BASE}rotate.php`, { retireCurrent });
+  return postJson<RotateResponse>(`/api/rotate.php`, { retireCurrent });
 }
 
 export async function runStreamedRoundTrip(
@@ -87,7 +83,7 @@ export async function runStreamedRoundTrip(
   form.append("password", password);
   form.append("chunkSize", String(chunkSize));
 
-  const res = await fetch(`${API_BASE}stream.php`, {
+  const res = await fetch(`/api/stream.php`, {
     method: "POST",
     credentials: "same-origin",
     body: form,
@@ -101,7 +97,7 @@ export async function runFileRoundTrip(file: File, password: string): Promise<Fi
   form.append("file", file);
   form.append("password", password);
 
-  const res = await fetch(`${API_BASE}file.php`, {
+  const res = await fetch(`/api/file.php`, {
     method: "POST",
     credentials: "same-origin",
     body: form,
